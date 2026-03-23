@@ -4,6 +4,25 @@ A Python toolkit for renaming and consolidating photo libraries using EXIF metad
 
 ## Scripts
 
+### `ingest.py` — SD card import
+
+Auto-detects a mounted SD card, reads EXIF, clusters files into shoots by time gap, and copies them to a local staging directory. Tracks imports in a SQLite database so re-running skips already-imported files.
+
+```sh
+# Preview (dry-run, default)
+uv run ingest.py
+
+# Apply
+uv run ingest.py --execute
+
+# Apply with a default tag suggestion per shoot
+uv run ingest.py --tag tokyo --execute
+```
+
+Per shoot you are prompted for a tag, or `s` to skip, or `i` to ignore the shoot forever.
+
+---
+
 ### `shoot.py` — single-shoot rename
 
 Renames all photos in a directory to a consistent date/time convention using embedded EXIF data. Designed for processing one shoot at a time.
@@ -71,6 +90,22 @@ uv run organize.py --source /path/to/unorg --dest /path/to/library --execute
 4. Filesystem mtime — `_mtime` appended, file goes to `_undated/`
 
 **Resume support:** a SQLite cache (`consolidate_cache.db`) tracks processed files using a fast size+mtime fingerprint. Interrupted runs resume without re-hashing completed files.
+
+---
+
+### `dedup.py` — deep duplicate scan
+
+Compares a source directory against a library using two-stage detection: SHA-256 of raw bytes (fast, catches exact copies) then SHA-256 of decoded pixels (catches EXIF-stripped copies). Duplicates are moved to a `dupes/` directory, never deleted.
+
+```sh
+# Preview (dry-run, default)
+uv run dedup.py --source /path/to/scan --library /path/to/library
+
+# Apply
+uv run dedup.py --source /path/to/scan --library /path/to/library --execute
+```
+
+Requires [Pillow](https://python-pillow.org/) for pixel decoding (installed automatically by `uv run`).
 
 ---
 

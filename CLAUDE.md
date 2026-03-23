@@ -9,6 +9,7 @@ A Python toolkit for renaming and consolidating photo libraries using EXIF metad
 | `ingest.py` | SD card import — auto-detect card, cluster into shoots, copy to Mac staging |
 | `shoot.py` | Targeted rename of a single shoot directory by EXIF date |
 | `organize.py` | Bulk library consolidation — dedup, organise, sidecar handling |
+| `dedup.py` | Deep duplicate scan — pixel-hash comparison across source and library |
 
 ## Running
 
@@ -26,6 +27,10 @@ uv run shoot.py /path/to/shoot tagname -x   # apply
 uv run organize.py
 uv run organize.py --execute              # apply
 uv run organize.py --source /path/to/unorg --dest /path/to/library  # override config
+
+# Scan for pixel-identical duplicates across source and library (dry-run by default)
+uv run dedup.py --source /path/to/scan --library /path/to/library
+uv run dedup.py --source /path/to/scan --library /path/to/library --execute  # move dupes
 ```
 
 ## Configuration
@@ -41,9 +46,9 @@ uv run --group dev pytest tests/test_unit.py         # unit tests only (no exift
 uv run --group dev pytest tests/test_integration.py  # integration tests (requires exiftool)
 ```
 
-Integration tests require `exiftool` to be installed. Tests that depend on real camera
-sample files skip automatically if the samples are not present (they are stored via Git LFS —
-run `git lfs pull` to fetch them).
+Integration tests require `exiftool` to be installed. Tests that use real camera sample
+files (stored via Git LFS) will **fail** if the samples are not present — run
+`git lfs pull` to fetch them before running integration tests.
 
 ## Dependencies
 
