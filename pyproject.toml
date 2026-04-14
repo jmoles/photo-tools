@@ -5,7 +5,7 @@ requires-python = ">=3.11"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.0.3",
     "exifread>=3.0",
     "Pillow>=10.0",
 ]
