@@ -201,7 +201,6 @@ class CacheDB:
             '(source_path, fingerprint, dest_path, content_hash) VALUES (?, ?, ?, ?)',
             (str(source), fp, str(dest), content_hash),
         )
-        self._conn.commit()
 
     def get_hash(self, content_hash: str) -> str | None:
         row = self._conn.execute(
@@ -215,6 +214,8 @@ class CacheDB:
             'INSERT OR IGNORE INTO hashes (content_hash, dest_path) VALUES (?, ?)',
             (content_hash, str(dest)),
         )
+
+    def commit(self) -> None:
         self._conn.commit()
 
     def load_hash_index(self) -> dict[str, str]:
@@ -505,7 +506,8 @@ def move_to_review(path: Path, ctx: ProcessContext) -> None:
         rel = Path(path.name)
     dest = ctx.dest_root / '_review' / rel
     logging.info('REVIEW   %s -> %s', path, dest)
-    _do_transfer(path, dest, ctx.dry_run, ctx.move)
+    if not _do_transfer(path, dest, ctx.dry_run, ctx.move):
+        logging.warning('Failed to transfer %s to _review', path)
 
 
 # ---------------------------------------------------------------------------
@@ -625,6 +627,7 @@ def process_file(path: Path, category: FileCategory, exif_data: dict, ctx: Proce
                 return 'ERROR'
         ctx.cache.insert_processed(real, fp, dest, content_hash)
         ctx.cache.insert_hash(content_hash, dest)
+        ctx.cache.commit()
 
     ctx.hash_index[content_hash] = str(dest)
     return action

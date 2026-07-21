@@ -354,7 +354,7 @@ def copy_shoot(
         dest = _unique_dest(dest_dir, src.name)
         if not dry_run:
             dest_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest)
+            shutil.copy2(str(src), str(dest))
             if src in shoot_set:
                 db.mark_imported(card_uuid, src, tag, dest)
         total += 1

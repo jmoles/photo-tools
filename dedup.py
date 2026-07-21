@@ -56,7 +56,7 @@ def pixel_hash(path: Path) -> str | None:
     try:
         with Image.open(path) as img:
             return hashlib.sha256(img.convert('RGB').tobytes()).hexdigest()
-    except (UnidentifiedImageError, Exception):
+    except Exception:
         return None
 
 
@@ -181,13 +181,17 @@ def scan(
 
 
 def _candidate_dirs(library: Path, src: Path) -> list[Path]:
-    """Return library subdirs most likely to contain a duplicate of src."""
-    # If source name starts with YYYYMM, check that year/month first
+    """Return library subdirs most likely to contain a duplicate of src.
+
+    Returns an empty list when the source has no YYYYMM prefix, avoiding
+    a full-library pixel scan. SHA-256 (stage 1) already covers exact
+    copies; pixel scanning is only narrowed by date prefix.
+    """
     name = src.name
     if len(name) >= 6 and name[:4].isdigit() and name[4:6].isdigit():
         yr, mo = name[:4], name[4:6]
         return [library / yr / mo, library / yr, library]
-    return [library]
+    return []
 
 
 def _move_to_dupes(src: Path, dupes_dir: Path) -> bool:
