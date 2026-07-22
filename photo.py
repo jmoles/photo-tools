@@ -59,15 +59,25 @@ def rename_xmp(xmp_path: Path, new_xmp_path: Path, old_img_name: str, new_img_na
     xmp_path.unlink()  # only reached after successful write
 
 
-def rename_file(path: Path, dt: datetime.datetime, tag: str, dry_run: bool = False) -> Path | None:
-    """Rename path to YYYYMMDD_HHMMSS_tag_original.ext (+ paired XMP sidecar).
+def rename_file(
+    path: Path,
+    dt: datetime.datetime,
+    tag: str,
+    dry_run: bool = False,
+    stem_suffix: str | None = None,
+) -> Path | None:
+    """Rename path to YYYYMMDD_HHMMSS_tag_<suffix>.ext (+ paired XMP sidecar).
+
+    stem_suffix overrides the default of `path.stem.lower().strip('_')` —
+    pass e.g. '001' to renumber a batch in sequence.
 
     Returns the new path, or None in dry-run mode.
     """
     ext = path.suffix.lstrip('.').lower()
-    original_stem = path.stem.lower().strip('_')
+    if stem_suffix is None:
+        stem_suffix = path.stem.lower().strip('_')
     xmp_path = find_xmp(path)
-    new_stem = f"{dt.strftime('%Y%m%d')}_{dt.strftime('%H%M%S')}_{tag}_{original_stem}"
+    new_stem = f"{dt.strftime('%Y%m%d')}_{dt.strftime('%H%M%S')}_{tag}_{stem_suffix}"
     new_path = path.with_name(f"{new_stem}.{ext}")
     new_xmp_path = path.with_name(f"{new_stem}.xmp")
 

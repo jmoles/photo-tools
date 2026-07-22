@@ -7,7 +7,6 @@
 
 import argparse
 import datetime
-import re
 import sys
 from pathlib import Path
 
@@ -16,24 +15,75 @@ import exifread
 from photo import ALREADY_RENAMED_RE, SHOOT_PHOTO_EXTS as PHOTO_EXTS, parse_exif_dt, rename_file
 
 
-def process_file(path: Path, tag: str, dry_run: bool = True) -> None:
+# Priority matches organize.py / ingest.py: original capture time wins over
+# digitisation timestamp, which wins over last-modified. exifread surfaces
+# DateTimeOriginal/Digitized in the EXIF SubIFD; ModifyDate is IFD0's
+# 'Image DateTime'. Many Apple/cloud-export JPEGs strip IFD0 but keep the
+# SubIFD original — without this fallback shoot.py skipped them all.
+EXIFREAD_DATE_TAGS = ('EXIF DateTimeOriginal', 'EXIF DateTimeDigitized', 'Image DateTime')
+
+
+def _read_dt(path: Path) -> datetime.datetime | None:
+    """Return best EXIF datetime for path, or None if no parseable tag exists."""
+    with path.open('rb') as f:
+        tags = exifread.process_file(f)
+    for key in EXIFREAD_DATE_TAGS:
+        if key in tags:
+            dt = parse_exif_dt(str(tags[key]))
+            if dt is not None:
+                return dt
+    return None
+
+
+def process_file(
+    path: Path,
+    tag: str,
+    dry_run: bool = True,
+    stem_suffix: str | None = None,
+) -> None:
     if not path.is_file():
         print(f"Error: {path} is not a file.")
         return
 
-    with path.open('rb') as f:
-        tags = exifread.process_file(f, stop_tag='Image DateTime')
-
-    if 'Image DateTime' not in tags:
+    dt = _read_dt(path)
+    if dt is None:
         print(f"Warning: No EXIF date found in {path.name}, skipping.")
         return
 
-    dt = parse_exif_dt(str(tags['Image DateTime']))
-    if dt is None:
-        print(f"Warning: Unable to parse EXIF date in {path.name}, skipping.")
-        return
+    rename_file(path, dt, tag, dry_run=dry_run, stem_suffix=stem_suffix)
 
-    rename_file(path, dt, tag, dry_run=dry_run)
+
+def collect_photos(directory: Path) -> list[Path]:
+    """Return sorted photo files in directory (extension-filtered)."""
+    return sorted(
+        p for p in directory.iterdir()
+        if p.is_file() and p.suffix.lstrip('.').lower() in PHOTO_EXTS
+    )
+
+
+def rename_in_sequence(directory: Path, tag: str, dry_run: bool = False) -> int:
+    """Rename all photos in directory using sequential numbering.
+
+    Files are sorted by (capture_time, original_name) so ties (e.g. exports
+    where every file shares one timestamp) are still deterministic.
+    Width is the larger of 3 digits or what the count requires.
+    Files without parseable EXIF dates are skipped with a warning.
+
+    Returns the number of files renamed (or that would be in dry-run).
+    """
+    dated: list[tuple[Path, datetime.datetime]] = []
+    for path in collect_photos(directory):
+        dt = _read_dt(path)
+        if dt is None:
+            print(f"Warning: No EXIF date found in {path.name}, skipping.")
+            continue
+        dated.append((path, dt))
+
+    dated.sort(key=lambda pair: (pair[1], pair[0].name))
+    width = max(3, len(str(len(dated))))
+    for i, (path, dt) in enumerate(dated, start=1):
+        rename_file(path, dt, tag, dry_run=dry_run, stem_suffix=f"{i:0{width}d}")
+    return len(dated)
 
 
 def check_already_renamed(directory: Path) -> list[str]:
@@ -46,7 +96,7 @@ def check_already_renamed(directory: Path) -> list[str]:
     ]
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Renames photo files to a date/time/tag convention."
     )
@@ -56,7 +106,11 @@ def parse_args() -> argparse.Namespace:
                         help="Actually rename files (default is a dry-run preview).")
     parser.add_argument('--force', action='store_true',
                         help="Bypass the already-renamed check.")
-    return parser.parse_args()
+    parser.add_argument('-n', '--sequence', action='store_true',
+                        help="Number files sequentially (001, 002, …) instead of "
+                             "preserving the original filename stem. Order is by "
+                             "EXIF capture time, then original filename.")
+    return parser.parse_args(argv)
 
 
 def main() -> None:
@@ -80,8 +134,10 @@ def main() -> None:
     if dry_run:
         print("Dry run — no files will be changed. Pass -x to apply.\n")
 
-    for path in sorted(directory.iterdir()):
-        if path.is_file() and path.suffix.lstrip('.').lower() in PHOTO_EXTS:
+    if args.sequence:
+        rename_in_sequence(directory, tag=tag, dry_run=dry_run)
+    else:
+        for path in collect_photos(directory):
             process_file(path, tag=tag, dry_run=dry_run)
 
 
