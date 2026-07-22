@@ -48,10 +48,6 @@ PHOTO_EXTS: frozenset[str] = frozenset({
     'bmp',                # BMP
 })
 
-VIDEO_EXTS: frozenset[str] = frozenset({
-    'mov', 'mp4', 'm4v', 'mpg', 'mpeg', 'avi', 'wmv',
-})
-
 REVIEW_EXTS: frozenset[str] = frozenset({
     'psd',                # Photoshop
     'lrcat',              # Lightroom catalog
@@ -78,9 +74,13 @@ SKIP_NAMES: frozenset[str] = frozenset({
     '.ds_store', 'thumbs.db', 'desktop.ini', '.dropbox',
 })
 
-EXIF_DATE_TAGS = ('DateTimeOriginal', 'CreateDate', 'ModifyDate')
-
-from photo import ALREADY_RENAMED_RE as _ALREADY_RENAMED_RE, find_xmp, parse_exif_dt as _parse_exif_dt
+from photo import (
+    ALREADY_RENAMED_RE as _ALREADY_RENAMED_RE,
+    EXIF_DATE_TAGS,
+    VIDEO_EXTS,
+    find_xmp,
+    parse_exif_dt as _parse_exif_dt,
+)
 
 
 def _original_stem(stem: str) -> str:

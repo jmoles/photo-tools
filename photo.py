@@ -22,6 +22,15 @@ SHOOT_PHOTO_EXTS: frozenset[str] = frozenset({
     'jpg', 'jpeg',  # JPEG
 })
 
+# Video extensions recognised by both scripts (organize.py, shoot.py)
+VIDEO_EXTS: frozenset[str] = frozenset({
+    'mov', 'mp4', 'm4v', 'mpg', 'mpeg', 'avi', 'wmv',
+})
+
+# exiftool tag priority for date extraction — shared so shoot.py's video
+# dates match what organize.py re-derives later (see shoot.py _read_video_dt).
+EXIF_DATE_TAGS = ('DateTimeOriginal', 'CreateDate', 'ModifyDate')
+
 
 def parse_exif_dt(s: str) -> datetime.datetime | None:
     """Parse an EXIF or ISO 8601 datetime string, returning None on failure or epoch."""

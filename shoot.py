@@ -7,13 +7,23 @@
 
 import argparse
 import datetime
+import json
+import subprocess
 import sys
 from pathlib import Path
 
 import exifread
 
-from photo import ALREADY_RENAMED_RE, SHOOT_PHOTO_EXTS as PHOTO_EXTS, parse_exif_dt, rename_file
+from photo import (
+    ALREADY_RENAMED_RE,
+    EXIF_DATE_TAGS,
+    SHOOT_PHOTO_EXTS as PHOTO_EXTS,
+    VIDEO_EXTS,
+    parse_exif_dt,
+    rename_file,
+)
 
+ALL_EXTS = PHOTO_EXTS | VIDEO_EXTS
 
 # Priority matches organize.py / ingest.py: original capture time wins over
 # digitisation timestamp, which wins over last-modified. exifread surfaces
@@ -23,8 +33,8 @@ from photo import ALREADY_RENAMED_RE, SHOOT_PHOTO_EXTS as PHOTO_EXTS, parse_exif
 EXIFREAD_DATE_TAGS = ('EXIF DateTimeOriginal', 'EXIF DateTimeDigitized', 'Image DateTime')
 
 
-def _read_dt(path: Path) -> datetime.datetime | None:
-    """Return best EXIF datetime for path, or None if no parseable tag exists."""
+def _read_photo_dt(path: Path) -> datetime.datetime | None:
+    """Return best EXIF datetime for a photo file via exifread."""
     with path.open('rb') as f:
         tags = exifread.process_file(f)
     for key in EXIFREAD_DATE_TAGS:
@@ -33,6 +43,43 @@ def _read_dt(path: Path) -> datetime.datetime | None:
             if dt is not None:
                 return dt
     return None
+
+
+def _read_video_dt(path: Path) -> datetime.datetime | None:
+    """Return best capture datetime for a video file via exiftool.
+
+    exifread only understands EXIF/TIFF-based metadata — it can't parse
+    QuickTime/MP4 containers at all. Video goes through exiftool instead,
+    using the same tag priority (EXIF_DATE_TAGS) organize.py uses, so a
+    video tagged here gets the identical date when organize.py later
+    re-derives it from the same file — the rename is idempotent, not a
+    second distinct one.
+    """
+    tag_args = [f'-{t}' for t in EXIF_DATE_TAGS]
+    try:
+        proc = subprocess.run(
+            ['exiftool', '-json', '-q', *tag_args, str(path)],
+            capture_output=True, text=True, timeout=60,
+        )
+        data = json.loads(proc.stdout) if proc.stdout.strip() else []
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        return None
+    if not data:
+        return None
+    item = data[0]
+    for key in EXIF_DATE_TAGS:
+        if key in item:
+            dt = parse_exif_dt(str(item[key]))
+            if dt is not None:
+                return dt
+    return None
+
+
+def _read_dt(path: Path) -> datetime.datetime | None:
+    """Return best capture datetime for path, or None if none is parseable."""
+    if path.suffix.lstrip('.').lower() in VIDEO_EXTS:
+        return _read_video_dt(path)
+    return _read_photo_dt(path)
 
 
 def process_file(
@@ -53,11 +100,11 @@ def process_file(
     rename_file(path, dt, tag, dry_run=dry_run, stem_suffix=stem_suffix)
 
 
-def collect_photos(directory: Path) -> list[Path]:
-    """Return sorted photo files in directory (extension-filtered)."""
+def collect_media(directory: Path) -> list[Path]:
+    """Return sorted photo/video files in directory (extension-filtered)."""
     return sorted(
         p for p in directory.iterdir()
-        if p.is_file() and p.suffix.lstrip('.').lower() in PHOTO_EXTS
+        if p.is_file() and p.suffix.lstrip('.').lower() in ALL_EXTS
     )
 
 
@@ -72,7 +119,7 @@ def rename_in_sequence(directory: Path, tag: str, dry_run: bool = False) -> int:
     Returns the number of files renamed (or that would be in dry-run).
     """
     dated: list[tuple[Path, datetime.datetime]] = []
-    for path in collect_photos(directory):
+    for path in collect_media(directory):
         dt = _read_dt(path)
         if dt is None:
             print(f"Warning: No EXIF date found in {path.name}, skipping.")
@@ -87,11 +134,11 @@ def rename_in_sequence(directory: Path, tag: str, dry_run: bool = False) -> int:
 
 
 def check_already_renamed(directory: Path) -> list[str]:
-    """Return names of any photo files that look like they've already been renamed."""
+    """Return names of any photo/video files that look like they've already been renamed."""
     return [
         p.name for p in directory.iterdir()
         if p.is_file()
-        and p.suffix.lstrip('.').lower() in PHOTO_EXTS
+        and p.suffix.lstrip('.').lower() in ALL_EXTS
         and ALREADY_RENAMED_RE.match(p.stem)
     ]
 
@@ -137,7 +184,7 @@ def main() -> None:
     if args.sequence:
         rename_in_sequence(directory, tag=tag, dry_run=dry_run)
     else:
-        for path in collect_photos(directory):
+        for path in collect_media(directory):
             process_file(path, tag=tag, dry_run=dry_run)
 
 

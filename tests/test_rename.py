@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime
+import json
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +13,7 @@ import pytest
 from shoot import (
     _read_dt,
     check_already_renamed,
+    collect_media,
     parse_args,
     process_file,
     rename_in_sequence,
@@ -163,6 +166,38 @@ class TestCheckAlreadyRenamed:
     def test_empty_directory(self, tmp_path):
         assert check_already_renamed(tmp_path) == []
 
+    def test_detects_renamed_video(self, tmp_path):
+        (tmp_path / '20260712_120742_liam1yparty_dscf5677.mov').touch()
+        result = check_already_renamed(tmp_path)
+        assert '20260712_120742_liam1yparty_dscf5677.mov' in result
+
+    def test_ignores_plain_video(self, tmp_path):
+        (tmp_path / 'DSCF5677.MOV').touch()
+        assert check_already_renamed(tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# collect_media
+# ---------------------------------------------------------------------------
+
+class TestCollectMedia:
+    def test_includes_photo_and_video_extensions(self, tmp_path):
+        (tmp_path / 'a.jpg').touch()
+        (tmp_path / 'b.mov').touch()
+        (tmp_path / 'c.mp4').touch()
+        result = collect_media(tmp_path)
+        assert [p.name for p in result] == ['a.jpg', 'b.mov', 'c.mp4']
+
+    def test_ignores_unrecognised_extensions(self, tmp_path):
+        (tmp_path / 'a.jpg').touch()
+        (tmp_path / 'notes.txt').touch()
+        (tmp_path / 'sidecar.xmp').touch()
+        result = collect_media(tmp_path)
+        assert [p.name for p in result] == ['a.jpg']
+
+    def test_empty_directory(self, tmp_path):
+        assert collect_media(tmp_path) == []
+
 
 # ---------------------------------------------------------------------------
 # process_file
@@ -314,6 +349,101 @@ class TestReadDt:
         }
         with patch('shoot.exifread.process_file', return_value=tags):
             assert _read_dt(img) == datetime.datetime(2024, 1, 1, 12, 0, 0)
+
+    def test_does_not_shell_out_for_photo_extensions(self, tmp_path):
+        """Photo files must never hit exiftool — exifread handles them."""
+        img = tmp_path / 'a.jpg'
+        img.touch()
+        with patch('shoot.subprocess.run') as run, \
+             patch('shoot.exifread.process_file', return_value={}):
+            _read_dt(img)
+        run.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _read_dt / _read_video_dt — video files go through exiftool, not exifread
+# ---------------------------------------------------------------------------
+
+class TestReadVideoDt:
+    """exifread can't parse QuickTime/MP4 containers, so video dates come
+    from exiftool instead, using the same tag priority organize.py uses
+    (DateTimeOriginal > CreateDate > ModifyDate) so dates match when
+    organize.py later re-derives them from the same file.
+    """
+
+    @staticmethod
+    def _exiftool_result(stdout: str):
+        result = MagicMock()
+        result.stdout = stdout
+        return result
+
+    def test_dispatches_video_extension_to_exiftool(self, tmp_path):
+        mov = tmp_path / 'clip.mov'
+        mov.touch()
+        stdout = json.dumps([{'SourceFile': str(mov), 'DateTimeOriginal': '2026:07:12 12:07:42'}])
+        with patch('shoot.subprocess.run', return_value=self._exiftool_result(stdout)) as run, \
+             patch('shoot.exifread.process_file') as exifread_mock:
+            assert _read_dt(mov) == datetime.datetime(2026, 7, 12, 12, 7, 42)
+        exifread_mock.assert_not_called()
+        assert run.call_args.args[0][0] == 'exiftool'
+
+    def test_prefers_datetime_original_over_create_date(self, tmp_path):
+        mov = tmp_path / 'clip.mp4'
+        mov.touch()
+        stdout = json.dumps([{
+            'SourceFile': str(mov),
+            'DateTimeOriginal': '2026:07:12 12:07:42',
+            'CreateDate': '2020:01:01 00:00:00',
+        }])
+        with patch('shoot.subprocess.run', return_value=self._exiftool_result(stdout)):
+            assert _read_dt(mov) == datetime.datetime(2026, 7, 12, 12, 7, 42)
+
+    def test_falls_back_to_create_date(self, tmp_path):
+        mov = tmp_path / 'clip.mov'
+        mov.touch()
+        stdout = json.dumps([{'SourceFile': str(mov), 'CreateDate': '2024:03:01 09:00:00'}])
+        with patch('shoot.subprocess.run', return_value=self._exiftool_result(stdout)):
+            assert _read_dt(mov) == datetime.datetime(2024, 3, 1, 9, 0, 0)
+
+    def test_falls_back_to_modify_date(self, tmp_path):
+        mov = tmp_path / 'clip.mov'
+        mov.touch()
+        stdout = json.dumps([{'SourceFile': str(mov), 'ModifyDate': '2024:03:01 09:00:00'}])
+        with patch('shoot.subprocess.run', return_value=self._exiftool_result(stdout)):
+            assert _read_dt(mov) == datetime.datetime(2024, 3, 1, 9, 0, 0)
+
+    def test_returns_none_on_empty_stdout(self, tmp_path):
+        mov = tmp_path / 'clip.mov'
+        mov.touch()
+        with patch('shoot.subprocess.run', return_value=self._exiftool_result('')):
+            assert _read_dt(mov) is None
+
+    def test_returns_none_when_no_date_tags_present(self, tmp_path):
+        mov = tmp_path / 'clip.mov'
+        mov.touch()
+        stdout = json.dumps([{'SourceFile': str(mov)}])
+        with patch('shoot.subprocess.run', return_value=self._exiftool_result(stdout)):
+            assert _read_dt(mov) is None
+
+    def test_returns_none_on_timeout(self, tmp_path):
+        mov = tmp_path / 'clip.mov'
+        mov.touch()
+        with patch('shoot.subprocess.run',
+                   side_effect=subprocess.TimeoutExpired(cmd='exiftool', timeout=60)):
+            assert _read_dt(mov) is None
+
+    def test_returns_none_when_exiftool_missing(self, tmp_path):
+        """exiftool not installed → FileNotFoundError (an OSError subclass)."""
+        mov = tmp_path / 'clip.mov'
+        mov.touch()
+        with patch('shoot.subprocess.run', side_effect=FileNotFoundError()):
+            assert _read_dt(mov) is None
+
+    def test_returns_none_on_malformed_json(self, tmp_path):
+        mov = tmp_path / 'clip.mov'
+        mov.touch()
+        with patch('shoot.subprocess.run', return_value=self._exiftool_result('not json')):
+            assert _read_dt(mov) is None
 
 
 # ---------------------------------------------------------------------------
